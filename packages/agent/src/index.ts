@@ -157,12 +157,12 @@ export function createAgent(options: AgentOptions) {
           case 'search': {
             const { stdout, exitCode } = await sandbox.exec(['grep', '-rn', action.query, '.'])
             const lines = exitCode === 0 ? stdout.trim().split('\n').slice(0, 50) : []
-            const results = lines.map(line => {
+            const results = lines.map((line: string) => {
               const [file, ln, ...content] = line.split(':')
               return { file, line: parseInt(ln) || 0, content: content.join(':').trim() }
             })
             await onEvent({ type: 'info', title: `Searched for "${action.query}"`, detail: `${results.length} matches` })
-            messages.push({ role: 'user', content: `Search results:\n${results.map((r) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
+            messages.push({ role: 'user', content: `Search results:\n${results.map((r: { file: string; line: number; content: string }) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
             break
           }
 
@@ -170,12 +170,12 @@ export function createAgent(options: AgentOptions) {
             const searchFor = action.symbol ?? (sanitizePath(action.path).split('/').pop()?.replace(/\.[^/.]+$/, '') ?? '')
             const { stdout, exitCode } = await sandbox.exec(['grep', '-rn', searchFor, '.'])
             const lines = exitCode === 0 ? stdout.trim().split('\n').slice(0, 50) : []
-            const results = lines.map(line => {
+            const results = lines.map((line: string) => {
               const [file, ln, ...content] = line.split(':')
               return { file, line: parseInt(ln) || 0, content: content.join(':').trim() }
             })
             await onEvent({ type: 'info', title: `Analyzed impact of ${searchFor}`, detail: `${results.length} matches` })
-            messages.push({ role: 'user', content: `Impact analysis results:\n${results.map((r) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
+            messages.push({ role: 'user', content: `Impact analysis results:\n${results.map((r: { file: string; line: number; content: string }) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
             break
           }
 
