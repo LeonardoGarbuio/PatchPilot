@@ -1,5 +1,18 @@
-import { test, expect } from 'vitest'
+import { test, expect, vi } from 'vitest'
 import Fastify from 'fastify'
+
+vi.mock('../db/client.js', () => ({
+  db: {
+    select: vi.fn().mockReturnThis(),
+    from: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
+    where: vi.fn().mockResolvedValue([]),
+    insert: vi.fn().mockReturnThis(),
+    values: vi.fn().mockResolvedValue({}),
+    delete: vi.fn().mockReturnThis(),
+  }
+}))
+
 import { commentRoutes } from './comments.js'
 
 test('commentRoutes enforces authentication', async () => {
