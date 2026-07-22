@@ -17,12 +17,13 @@ export class OllamaProvider implements AgentProvider {
         model: this.model,
         messages,
         stream: false,
+        format: 'json',
         options: {
-          temperature: 0.1, // low temperature for deterministic code changes
+          temperature: 0.0, // lowest temperature for deterministic code changes
           num_ctx: 32768,
         },
       }),
-      signal: AbortSignal.timeout(120_000), // 2 min timeout
+      signal: AbortSignal.timeout(6000_000), // 10 min timeout
     })
 
     if (!res.ok) {

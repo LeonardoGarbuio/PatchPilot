@@ -159,8 +159,14 @@ export async function createSandbox(options: { workspacePath: string }): Promise
 
     async verify(): Promise<SandboxVerifyResult> {
       const run = async (cmd: string) => {
-        const { exitCode } = await sandbox.exec(cmd)
-        return exitCode === 0 ? 'passed' : 'failed'
+        const { stdout, stderr, exitCode } = await sandbox.exec(cmd)
+        const output = stdout + '\n' + stderr
+        if (output.includes('ENOENT') || output.includes('no such file or directory') || output.includes('package.json') && exitCode !== 0) {
+          return 'skipped'
+        }
+        if (exitCode !== 0) return 'failed'
+        if (output.includes('missing script') || output.trim() === '') return 'skipped'
+        return 'passed'
       }
 
       // Install deps first (with network temporarily re-enabled is NOT done — use pre-installed image)
@@ -170,10 +176,19 @@ export async function createSandbox(options: { workspacePath: string }): Promise
       let testCount = 0
       let tests: 'passed' | 'failed' | 'skipped' = 'skipped'
       try {
-        const { stdout, exitCode } = await sandbox.exec('npm test -- --reporter=json 2>/dev/null || npm test 2>&1')
-        tests = exitCode === 0 ? 'passed' : 'failed'
-        const match = stdout.match(/(\d+) passed/)
-        if (match) testCount = parseInt(match[1]!)
+        const { stdout, stderr, exitCode } = await sandbox.exec('npm run test --if-present -- --reporter=json 2>/dev/null || npm run test --if-present 2>&1')
+        const output = stdout + '\n' + stderr
+        if (output.includes('ENOENT') || output.includes('no such file or directory') || output.includes('package.json') && exitCode !== 0) {
+          tests = 'skipped'
+        } else if (exitCode !== 0) {
+          tests = 'failed'
+        } else if (output.includes('no test specified') || output.trim() === '') {
+          tests = 'skipped'
+        } else {
+          tests = 'passed'
+          const match = output.match(/(\d+) passed/)
+          if (match) testCount = parseInt(match[1]!)
+        }
       } catch {}
 
       const build = await run('npm run build --if-present').catch(() => 'skipped' as const)

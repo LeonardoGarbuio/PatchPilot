@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { join, relative, extname } from 'path'
+import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from 'fs'
+import { join, relative, extname, dirname } from 'path'
 
 // ─── Security: blocked file patterns ─────────────────────────────────────────
 
@@ -37,6 +37,10 @@ export function readFile(absolutePath: string, repoRoot: string): ReadResult {
 
   if (relPath.startsWith('..') || isBlocked(relPath)) {
     return { path: relPath, content: '[REDACTED — sensitive or out of bounds]', lines: 0, blocked: true }
+  }
+
+  if (!existsSync(absolutePath)) {
+    return { path: relPath, content: '[File not found]', lines: 0, blocked: false }
   }
 
   const stat = statSync(absolutePath)
@@ -79,6 +83,7 @@ export function listDir(absolutePath: string, repoRoot: string, maxDepth = 3): D
 
       const full = join(dir, name)
       const rel = relative(repoRoot, full)
+      if (!existsSync(full)) continue
       const stat = statSync(full)
 
       if (stat.isDirectory()) {
@@ -116,6 +121,7 @@ export function searchFiles(
     for (const name of readdirSync(dir)) {
       if (IGNORED_DIRS.has(name)) continue
       const full = join(dir, name)
+      if (!existsSync(full)) continue
       const stat = statSync(full)
       if (stat.isDirectory()) {
         walk(full)
@@ -147,6 +153,9 @@ export function applyPatch(absolutePath: string, repoRoot: string, newContent: s
   if (rel.startsWith('..') || isBlocked(rel)) {
     throw new Error(`Patch denied: "${rel}" is outside the repo root or is a sensitive file`)
   }
+
+  // Ensure parent directory exists
+  mkdirSync(dirname(absolutePath), { recursive: true })
 
   writeFileSync(absolutePath, newContent, 'utf-8')
 }

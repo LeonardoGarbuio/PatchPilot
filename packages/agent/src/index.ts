@@ -42,9 +42,9 @@ Rules you MUST follow:
 2. NEVER delete files unless explicitly required by the task.
 3. NEVER add dependencies without explicit user approval.
 4. Make the smallest possible change that correctly solves the task.
-5. Always add tests for your changes when a test suite exists.
-6. For bug fixes, ALWAYS write a failing test first, run the test to verify it fails, then write the fix, then run the test to verify it passes. This is strict TDD.
-7. After making changes, explain exactly what you changed and why.
+5. If the project does NOT have a test suite (e.g. no package.json, no tests), DO NOT attempt to run tests, and DO NOT create a test suite or config files. Just declare done.
+6. If a test suite DOES exist, always verify your changes by running the appropriate test command.
+7. After making changes, use the "done" action and explain exactly what you changed and why.
 
 When you need to take an action, respond with a JSON object like:
 {"action": "read_file", "path": "src/auth.ts"}
@@ -110,7 +110,7 @@ export function createAgent(options: AgentOptions) {
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
-          content: `Task: ${task}\n\nApproved plan:\n${plan.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}${memoryContext}\n\nWorkspace is at /workspace. Start by exploring the repository structure.`,
+          content: `Task: ${task}\n\nApproved plan:\n${plan.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}${memoryContext}\n\nYou are at the root of the repository. Use relative paths (e.g. "." or "src/file.ts"). Start by exploring the repository structure.`,
         },
       ]
 
@@ -118,6 +118,11 @@ export function createAgent(options: AgentOptions) {
       let done = false
       let iterations = 0
       const MAX_ITERATIONS = 20
+      
+      const sanitizePath = (p?: string) => {
+        if (!p || p === '.' || p === './') return ''
+        return p.replace(/^(\/?workspace\/?|\/)/, '')
+      }
 
       while (!done && iterations < MAX_ITERATIONS) {
         iterations++
@@ -136,17 +141,19 @@ export function createAgent(options: AgentOptions) {
 
         switch (action.action) {
           case 'read_file': {
-            const absPath = join(sandbox.workspacePath, action.path)
+            const cleanPath = sanitizePath(action.path)
+            const absPath = join(sandbox.workspacePath, cleanPath)
             const result = readFile(absPath, sandbox.workspacePath)
-            await onEvent({ type: 'file_read', title: `Read ${action.path}`, detail: `${result.lines} lines` })
-            messages.push({ role: 'user', content: `File content of ${action.path}:\n\`\`\`\n${result.content}\n\`\`\`` })
+            await onEvent({ type: 'file_read', title: `Read ${cleanPath}`, detail: `${result.lines} lines` })
+            messages.push({ role: 'user', content: `File content of ${cleanPath}:\n\`\`\`\n${result.content}\n\`\`\`` })
             break
           }
 
           case 'list_dir': {
-            const absPath = join(sandbox.workspacePath, action.path ?? '')
+            const cleanPath = sanitizePath(action.path)
+            const absPath = join(sandbox.workspacePath, cleanPath)
             const entries = listDir(absPath, sandbox.workspacePath)
-            await onEvent({ type: 'info', title: `Listed ${action.path ?? '/'}`, detail: `${entries.length} entries` })
+            await onEvent({ type: 'info', title: `Listed ${cleanPath || '/'}`, detail: `${entries.length} entries` })
             messages.push({ role: 'user', content: `Directory listing:\n${entries.map((e) => `${e.type === 'dir' ? '📁' : '📄'} ${e.path}`).join('\n')}` })
             break
           }
@@ -159,26 +166,28 @@ export function createAgent(options: AgentOptions) {
           }
 
           case 'analyze_impact': {
-            const results = analyzeImpact(sandbox.workspacePath, action.path, action.symbol)
-            await onEvent({ type: 'info', title: `Analyzed impact of ${action.symbol ?? action.path}`, detail: `${results.length} matches` })
+            const cleanPath = sanitizePath(action.path)
+            const results = analyzeImpact(sandbox.workspacePath, cleanPath, action.symbol)
+            await onEvent({ type: 'info', title: `Analyzed impact of ${action.symbol ?? cleanPath}`, detail: `${results.length} matches` })
             messages.push({ role: 'user', content: `Impact analysis results:\n${results.map((r) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
             break
           }
 
           case 'write_file': {
-            const absPath = join(sandbox.workspacePath, action.path)
+            const cleanPath = sanitizePath(action.path)
+            const absPath = join(sandbox.workspacePath, cleanPath)
             let original = ''
             try { original = readFile(absPath, sandbox.workspacePath).content } catch {}
 
-            if (!writtenFiles.has(action.path)) {
-              writtenFiles.set(action.path, { original, current: action.content })
+            if (!writtenFiles.has(cleanPath)) {
+              writtenFiles.set(cleanPath, { original, current: action.content })
             } else {
-              writtenFiles.get(action.path)!.current = action.content
+              writtenFiles.get(cleanPath)!.current = action.content
             }
 
             applyPatch(absPath, sandbox.workspacePath, action.content)
-            await onEvent({ type: 'file_write', title: `Wrote ${action.path}` })
-            messages.push({ role: 'user', content: `✓ File written: ${action.path}` })
+            await onEvent({ type: 'file_write', title: `Wrote ${cleanPath}` })
+            messages.push({ role: 'user', content: `✓ File written: ${cleanPath}` })
             break
           }
 

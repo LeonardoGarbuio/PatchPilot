@@ -36,4 +36,26 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(200).send({ path: null })
     }
   })
+
+  app.get('/api/system/status', async (req, reply) => {
+    let docker = false
+    let ollama = false
+
+    try {
+      const { createSandbox } = await import('@patchpilot/sandbox')
+      docker = await (createSandbox as any).isDockerAvailable()
+    } catch {
+      docker = false
+    }
+
+    try {
+      const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434'
+      const res = await fetch(`${OLLAMA_BASE_URL}/`, { signal: AbortSignal.timeout(2000) })
+      ollama = res.ok
+    } catch {
+      ollama = false
+    }
+
+    return reply.send({ docker, ollama })
+  })
 }

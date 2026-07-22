@@ -1,17 +1,20 @@
 let isAuthenticated = false
+let authPromise: Promise<void> | null = null
 
 export async function ensureAuthenticated() {
   if (isAuthenticated) return
+  if (authPromise) return authPromise
   
-  try {
-    const checkRes = await fetch('/api/auth/me', { method: 'GET' })
-    if (checkRes.ok) {
-      isAuthenticated = true
-      return
-    }
-  } catch {}
+  authPromise = (async () => {
+    try {
+      const checkRes = await fetch('/api/auth/me', { method: 'GET' })
+      if (checkRes.ok) {
+        isAuthenticated = true
+        return
+      }
+    } catch {}
 
-  // Create an anonymous user with a secure random password
+    // Create an anonymous user with a secure random password
   const num = Math.floor(Math.random() * 1000000)
   const email = `local${num}@patchpilot.dev`
   const password = Array.from(crypto.getRandomValues(new Uint8Array(16)))
@@ -32,6 +35,13 @@ export async function ensureAuthenticated() {
   } catch (err) {
     console.error('Failed to authenticate', err)
     throw err
+  }
+  })()
+  
+  try {
+    await authPromise
+  } finally {
+    authPromise = null
   }
 }
 

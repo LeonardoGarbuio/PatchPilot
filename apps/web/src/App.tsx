@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Editor } from '@monaco-editor/react'
 import {
   Activity, ArrowRight, Bot, Box, Check, CheckCircle2, ChevronRight,
@@ -17,6 +17,22 @@ function Logo() {
 }
 
 function Sidebar({ view, setView, activeCount }: { view: View; setView: (v: View) => void, activeCount: number }) {
+  const [sysStatus, setSysStatus] = useState({ docker: true, ollama: true })
+
+  useEffect(() => {
+    let mounted = true
+    const check = async () => {
+      try {
+        const res = await apiFetch('/api/system/status')
+        const data = await res.json()
+        if (mounted) setSysStatus(data)
+      } catch {}
+    }
+    check()
+    const int = setInterval(check, 10000)
+    return () => { mounted = false; clearInterval(int) }
+  }, [])
+
   const nav = [
     { id: 'dashboard' as View, label: 'Overview', icon: LayoutDashboard },
     { id: 'new' as View, label: 'New task', icon: Plus },
@@ -27,9 +43,9 @@ function Sidebar({ view, setView, activeCount }: { view: View; setView: (v: View
     <nav>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={view === id ? 'active' : ''} onClick={() => setView(id)}><Icon size={18} /><span>{label}</span>{id === 'run' && activeCount > 0 && <b>{activeCount}</b>}</button>)}</nav>
     <div className="sidebar-bottom">
       <div className="system-card">
-        <div><span className="pulse" />Systems ready</div>
-        <p><span>Ollama</span><strong>Online</strong></p>
-        <p><span>Docker</span><strong>Online</strong></p>
+        <div><span className={sysStatus.docker && sysStatus.ollama ? "pulse" : "pulse error"} style={{ background: sysStatus.docker && sysStatus.ollama ? undefined : '#f87171' }} />Systems</div>
+        <p><span>Ollama</span><strong style={{ color: sysStatus.ollama ? '#34d399' : '#f87171' }}>{sysStatus.ollama ? 'Online' : 'Offline'}</strong></p>
+        <p><span>Docker</span><strong style={{ color: sysStatus.docker ? '#34d399' : '#f87171' }}>{sysStatus.docker ? 'Online' : 'Offline'}</strong></p>
       </div>
       <button><Settings size={18} />Settings</button>
       <div className="profile"><div>IM</div><span><strong>Local Dev</strong><small>Local workspace</small></span><ChevronRight size={16} /></div>
@@ -144,10 +160,35 @@ function NewTask({ begin }: { begin: (task: string, repo: string, source: 'local
     </main></>
 }
 
-function RunView({ jobId, setView }: { jobId: string | null; setView: (v: View) => void }) {
+function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; setView: (v: View) => void, jobs: any[], selectJob: (id: string) => void }) {
   const { job, events, loading, generatePlan, approveAndRun } = useJob(jobId)
 
-  if (!jobId || loading && !job) return <div style={{ padding: '2rem', textAlign: 'center' }}><LoaderCircle className="spin" /> Loading run data...</div>
+  if (!jobId) {
+    return (
+      <>
+        <Header title="All Runs" subtitle="Select a run to view its details." onMenu={() => {}} />
+        <main className="content narrow">
+          <section className="jobs">
+            {jobs.length === 0 && <div style={{ opacity: 0.5, padding: '1rem' }}>No runs yet.</div>}
+            {jobs.map((j) => (
+              <button className="job" key={j.id} onClick={() => { selectJob(j.id); setView(['complete', 'approved'].includes(j.status) ? 'review' : 'run') }}>
+                <div className="repo-icon"><Github size={20} /></div>
+                <div className="job-main"><small>{j.repo}</small><strong>{j.title}</strong></div>
+                <div className="job-files"><FileCode2 size={15} /> —</div>
+                <div>
+                  <span className={`status ${j.status === 'complete' ? 'green' : j.status === 'failed' ? 'red' : 'purple'}`}>
+                    <CircleDot size={12} /> {j.status.replace('_', ' ')}
+                  </span>
+                </div><ChevronRight size={18} />
+              </button>
+            ))}
+          </section>
+        </main>
+      </>
+    )
+  }
+
+  if (loading && !job) return <div style={{ padding: '2rem', textAlign: 'center' }}><LoaderCircle className="spin" /> Loading run data...</div>
   if (!job) return <div style={{ padding: '2rem' }}>Job not found</div>
 
   const isPlanning = job.status === 'planning'
@@ -243,7 +284,7 @@ function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) =
       ))}
 
     </section>
-    <aside className="review-side"><section><h3>Verification</h3>{['Lint', 'Typecheck', 'Tests', 'Build'].map(x => <div className="check-row" key={x}><CheckCircle2 /><span>{x}</span><strong>Passed</strong></div>)}</section><section><h3>Files</h3>{changes.map((x, i) => <label className="file-check" key={i}><input type="checkbox" defaultChecked /><span><FileCode2 />{x.path}<small>{x.status}</small></span></label>)}</section><div className="approval">
+    <aside className="review-side"><section><h3>Verification</h3>{['Lint', 'Typecheck', 'Tests', 'Build'].map(x => <div className="check-row" key={x}><CheckCircle2 /><span>{x}</span><strong>Verified</strong></div>)}</section><section><h3>Files</h3>{changes.map((x, i) => <label className="file-check" key={i}><input type="checkbox" defaultChecked /><span><FileCode2 />{x.path}<small>{x.status}</small></span></label>)}</section><div className="approval">
       <button className={approved ? 'approved' : ''} onClick={async () => {
         if (!approved) {
           await apiFetch(`/api/jobs/${jobId}/approve`, { method: 'POST' })
@@ -310,5 +351,5 @@ export default function App() {
 
   const activeCount = jobs.filter(j => ['planning', 'awaiting_approval', 'running', 'verifying'].includes(j.status)).length
 
-  return <div className="app"><div className={mobileOpen ? 'nav-wrap open' : 'nav-wrap'}><Sidebar view={view} setView={navigate} activeCount={activeCount} /></div><button className="floating-menu" onClick={() => setMobileOpen(!mobileOpen)}><Menu /></button><div className="page">{view === 'dashboard' && <Dashboard setView={navigate} jobs={jobs} selectJob={setSelectedJobId} />}{view === 'new' && <NewTask begin={handleNewTask} />}{view === 'run' && <RunView jobId={selectedJobId} setView={navigate} />}{view === 'review' && <Review jobId={selectedJobId} setView={navigate} />}</div></div>
+  return <div className="app"><div className={mobileOpen ? 'nav-wrap open' : 'nav-wrap'}><Sidebar view={view} setView={navigate} activeCount={activeCount} /></div><button className="floating-menu" onClick={() => setMobileOpen(!mobileOpen)}><Menu /></button><div className="page">{view === 'dashboard' && <Dashboard setView={navigate} jobs={jobs} selectJob={setSelectedJobId} />}{view === 'new' && <NewTask begin={handleNewTask} />}{view === 'run' && <RunView jobId={selectedJobId} setView={navigate} jobs={jobs} selectJob={setSelectedJobId} />}{view === 'review' && <Review jobId={selectedJobId} setView={navigate} />}</div></div>
 }

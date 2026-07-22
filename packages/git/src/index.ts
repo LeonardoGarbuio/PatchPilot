@@ -14,6 +14,11 @@ export function createUnifiedDiff(
   originalContent: string,
   newContent: string,
 ): string {
+  // Prevent catastrophic O(N^2) hangs in the diff package on large or highly complex files
+  if (originalContent.length > 50000 || newContent.length > 50000) {
+    return `--- a/${filePath}\n+++ b/${filePath}\n@@ -1,1 +1,1 @@\n-[File too large or complex for inline diff]\n+[File too large or complex for inline diff]`
+  }
+
   return createTwoFilesPatch(
     `a/${filePath}`,
     `b/${filePath}`,

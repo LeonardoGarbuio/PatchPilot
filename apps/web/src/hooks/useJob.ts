@@ -50,6 +50,18 @@ export function useJob(jobId: string | null) {
 
   useEffect(() => {
     fetchJob()
+    
+    // Fallback polling for robust updates
+    const interval = setInterval(() => {
+      setJob(currentJob => {
+        if (currentJob && ['planning', 'running', 'verifying'].includes(currentJob.status)) {
+          fetchJob()
+        }
+        return currentJob
+      })
+    }, 3000)
+    
+    return () => clearInterval(interval)
   }, [fetchJob])
 
   // Listen to SSE
@@ -58,12 +70,9 @@ export function useJob(jobId: string | null) {
     const controller = new AbortController()
 
     async function connect() {
-      const token = await getToken()
       fetchEventSource(`/api/jobs/${jobId}/stream`, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
+        credentials: 'include',
         signal: controller.signal,
         onmessage(msg) {
           if (!msg.data) return
