@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db } from '../db/client.js'
-import { diffComments } from '../db/schema.js'
+import { diffComments, fileChanges, jobs } from '../db/schema.js'
 import { z } from 'zod'
 
 const CreateCommentSchema = z.object({
@@ -22,6 +22,19 @@ export async function commentRoutes(app: FastifyInstance) {
   // GET /api/file-changes/:id/comments — list comments for a file change
   app.get('/api/file-changes/:id/comments', { preHandler: authenticate }, async (req: any, reply) => {
     const { id: fileChangeId } = req.params as { id: string }
+    const userId = req.user.sub as string
+
+    // Verify ownership
+    const [change] = await db
+      .select({ jobUserId: jobs.userId })
+      .from(fileChanges)
+      .innerJoin(jobs, eq(fileChanges.jobId, jobs.id))
+      .where(eq(fileChanges.id, fileChangeId))
+      
+    if (!change || change.jobUserId !== userId) {
+      return reply.status(404).send({ error: 'File change not found' })
+    }
+
     const comments = await db
       .select()
       .from(diffComments)
@@ -37,6 +50,18 @@ export async function commentRoutes(app: FastifyInstance) {
 
     const { lineNumber, content } = parsed.data
     const userId = req.user.sub as string
+    
+    // Verify ownership
+    const [change] = await db
+      .select({ jobUserId: jobs.userId })
+      .from(fileChanges)
+      .innerJoin(jobs, eq(fileChanges.jobId, jobs.id))
+      .where(eq(fileChanges.id, fileChangeId))
+      
+    if (!change || change.jobUserId !== userId) {
+      return reply.status(404).send({ error: 'File change not found' })
+    }
+
     const id = nanoid()
 
     await db.insert(diffComments).values({

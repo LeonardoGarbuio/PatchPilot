@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { db } from '../db/client.js'
 import { jobs } from '../db/schema.js'
 import { existsSync, mkdirSync } from 'fs'
+import { cp } from 'fs/promises'
 import { join } from 'path'
 import { pipeline } from 'stream/promises'
 import { createWriteStream } from 'fs'
@@ -97,6 +98,32 @@ export async function repoRoutes(app: FastifyInstance) {
       await git.clone(url, workspacePath, ['--depth', '1'])
     } catch (err) {
       return reply.status(422).send({ error: `Clone failed: ${err instanceof Error ? err.message : err}` })
+    }
+
+    await db.update(jobs).set({ workspacePath }).where(eq(jobs.id, jobId))
+
+    return reply.send({ workspacePath })
+  })
+
+  // POST /api/repos/local — copy a local folder into an isolated workspace
+  app.post('/api/repos/local', { preHandler: authenticate }, async (req: any, reply) => {
+    const { path, jobId } = req.body as { path: string; jobId: string }
+    const userId = req.user.sub as string
+    if (!path || !jobId) return reply.status(400).send({ error: 'path and jobId required' })
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId))
+    if (!job || job.userId !== userId) return reply.status(404).send({ error: 'Job not found' })
+
+    if (!existsSync(path)) return reply.status(400).send({ error: 'Local path does not exist' })
+
+    const workspaceId = nanoid()
+    const workspacePath = join(WORKSPACES_DIR, workspaceId, 'repo')
+    mkdirSync(workspacePath, { recursive: true })
+
+    try {
+      await cp(path, workspacePath, { recursive: true, filter: (src) => !src.includes('node_modules') && !src.includes('.git') })
+    } catch (err) {
+      return reply.status(500).send({ error: `Copy failed: ${err instanceof Error ? err.message : err}` })
     }
 
     await db.update(jobs).set({ workspacePath }).where(eq(jobs.id, jobId))

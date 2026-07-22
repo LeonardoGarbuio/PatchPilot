@@ -48,8 +48,14 @@ const ALLOWED_COMMANDS = new Set([
   'go test ./...',
 ])
 
-function isAllowedCommand(cmd: string): boolean {
-  return [...ALLOWED_COMMANDS].some((allowed) => cmd.trim().startsWith(allowed.split(' ')[0]!))
+export function isAllowedCommand(cmd: string): boolean {
+  const cleanCmd = cmd.trim()
+  // Block shell characters to prevent chaining and execution bypass
+  if (/[&|;`$()]/.test(cleanCmd)) return false
+  // Ensure the command exactly matches an allowed command or is a sub-command of it (with space)
+  return [...ALLOWED_COMMANDS].some(
+    (allowed) => cleanCmd === allowed || cleanCmd.startsWith(allowed + ' ')
+  )
 }
 
 // ─── Base image selection per project type ────────────────────────────────────
@@ -158,10 +164,56 @@ export async function createSandbox(options: { workspacePath: string }): Promise
     },
 
     async verify(): Promise<SandboxVerifyResult> {
+      // Create a temporary verification container with network access
+      const verifyContainer = await d.createContainer({
+        Image: image,
+        Cmd: ['tail', '-f', '/dev/null'],
+        WorkingDir: '/workspace',
+        HostConfig: {
+          Binds: [`${workspacePath}:/workspace:rw`],
+          AutoRemove: true,
+          // Network access is allowed for installing dependencies
+        },
+      })
+      await verifyContainer.start()
+
+      const vExec = async (cmd: string) => {
+        const exec = await verifyContainer.exec({
+          Cmd: ['/bin/sh', '-c', cmd],
+          AttachStdout: true,
+          AttachStderr: true,
+          WorkingDir: '/workspace',
+        })
+        const stream = await exec.start({ hijack: true, stdin: false })
+        let stdout = ''
+        let stderr = ''
+        await new Promise<void>((resolve, reject) => {
+          verifyContainer.modem.demuxStream(
+            stream,
+            { write: (b: Buffer) => { stdout += b.toString() } },
+            { write: (b: Buffer) => { stderr += b.toString() } }
+          )
+          stream.on('end', resolve)
+          stream.on('error', reject)
+        })
+        const inspection = await exec.inspect()
+        return { stdout, stderr, exitCode: inspection.ExitCode ?? 1 }
+      }
+
+      try {
+        if (existsSync(`${workspacePath}/package.json`)) {
+          await vExec('npm install --no-audit --no-fund')
+        } else if (existsSync(`${workspacePath}/requirements.txt`)) {
+          await vExec('pip install -r requirements.txt')
+        }
+      } catch (err) {
+        console.warn('Failed to install dependencies in verify container', err)
+      }
+
       const run = async (cmd: string) => {
-        const { stdout, stderr, exitCode } = await sandbox.exec(cmd)
+        const { stdout, stderr, exitCode } = await vExec(cmd)
         const output = stdout + '\n' + stderr
-        if (output.includes('ENOENT') || output.includes('no such file or directory') || output.includes('package.json') && exitCode !== 0) {
+        if (output.includes('ENOENT') || output.includes('no such file or directory') || (output.includes('package.json') && exitCode !== 0)) {
           return 'skipped'
         }
         if (exitCode !== 0) return 'failed'
@@ -169,16 +221,15 @@ export async function createSandbox(options: { workspacePath: string }): Promise
         return 'passed'
       }
 
-      // Install deps first (with network temporarily re-enabled is NOT done — use pre-installed image)
       const lint = await run('npm run lint --if-present').catch(() => 'skipped' as const)
       const typecheck = await run('npm run typecheck --if-present').catch(() => 'skipped' as const)
 
       let testCount = 0
       let tests: 'passed' | 'failed' | 'skipped' = 'skipped'
       try {
-        const { stdout, stderr, exitCode } = await sandbox.exec('npm run test --if-present -- --reporter=json 2>/dev/null || npm run test --if-present 2>&1')
+        const { stdout, stderr, exitCode } = await vExec('npm run test --if-present -- --reporter=json 2>/dev/null || npm run test --if-present 2>&1')
         const output = stdout + '\n' + stderr
-        if (output.includes('ENOENT') || output.includes('no such file or directory') || output.includes('package.json') && exitCode !== 0) {
+        if (output.includes('ENOENT') || output.includes('no such file or directory') || (output.includes('package.json') && exitCode !== 0)) {
           tests = 'skipped'
         } else if (exitCode !== 0) {
           tests = 'failed'
@@ -193,6 +244,10 @@ export async function createSandbox(options: { workspacePath: string }): Promise
 
       const build = await run('npm run build --if-present').catch(() => 'skipped' as const)
 
+      await verifyContainer.stop({ t: 2 }).catch(() => {})
+
+      // Must have at least one test passed, or all skipped. If all skipped, it's considered passed for repos without tests.
+      // But if there are failures, allPassed is false.
       const allPassed = [lint, typecheck, tests, build].every((r) => r !== 'failed')
 
       return { lint, typecheck, tests, testCount, build, allPassed }

@@ -67,7 +67,7 @@ function Dashboard({ setView, jobs, selectJob }: { setView: (v: View) => void, j
           <div className="orbit orbit-one" /><div className="orbit orbit-two" />
           <div className="pilot-core"><Bot size={32} /><span>PATCH<br />PILOT</span></div>
           <div className="float-tag tag-one"><ShieldCheck size={16} /><span>Isolated<br /><b>Sandbox</b></span></div>
-          <div className="float-tag tag-two"><TestTube2 size={16} /><span>24 / 24<br /><b>Tests passed</b></span></div>
+          <div className="float-tag tag-two"><TestTube2 size={16} /><span>{jobs.filter(j => j.status === 'complete' || j.status === 'approved').length} / {jobs.length || 1}<br /><b>Runs passed</b></span></div>
           <div className="float-tag tag-three"><GitBranch size={16} /><span>Human<br /><b>Approved</b></span></div>
         </div>
       </section>
@@ -75,7 +75,11 @@ function Dashboard({ setView, jobs, selectJob }: { setView: (v: View) => void, j
       <section className="stats">
         <div><span><Activity size={17} /> Runs this month</span><strong>{jobs.length}</strong></div>
         <div><span><CheckCircle2 size={17} /> Success rate</span><strong>{jobs.length ? Math.round((jobs.filter(j => j.status === 'complete' || j.status === 'approved').length / jobs.length) * 100) : 0}%</strong></div>
-        <div><span><Clock3 size={17} /> Avg time</span><strong>~2m</strong></div>
+        <div><span><Clock3 size={17} /> Avg time</span><strong>
+          {jobs.filter(j => j.startedAt && j.finishedAt).length > 0
+            ? '~' + Math.round(jobs.filter(j => j.startedAt && j.finishedAt).reduce((acc, j) => acc + (new Date(j.finishedAt).getTime() - new Date(j.startedAt).getTime()), 0) / jobs.filter(j => j.startedAt && j.finishedAt).length / 60000) + 'm'
+            : '~2m'}
+        </strong></div>
       </section>
 
       <section className="section-head"><div><h3>Recent runs</h3><p>Your latest automated code changes</p></div><button className="ghost" onClick={() => setView('run')}>View all <ArrowRight size={15} /></button></section>
@@ -266,7 +270,7 @@ function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) =
 
   return <><Header title="Review changes" subtitle="Nothing reaches your repository until you approve it." onMenu={() => {}} /><main className="content review-layout">
     <section className="review-main"><div className="review-summary"><div className="success-icon"><Check /></div><div><span className="eyebrow">ALL CHECKS PASSED</span><h2>A small, focused patch.</h2><p>{job.task}</p></div><div className="change-count"><strong>+{additions}</strong><span>−{deletions}</span><small>across {changes.length} files</small></div></div>
-      <div className="diff-toolbar"><div><button className="active">Changes</button><button>Checks</button><button>Risks <b>0</b></button></div><button onClick={() => window.open(`/api/jobs/${jobId}/patch`, '_blank')}><Download size={15} /> Download .patch</button></div>
+      <div className="diff-toolbar"><div><button className="active">Changes</button><button>Checks</button><button>Risks <b>{changes.filter(c => c.diff.includes('TODO') || c.diff.includes('FIXME') || c.diff.includes('console.log')).length}</b></button></div><button onClick={() => window.open(`/api/jobs/${jobId}/patch`, '_blank')}><Download size={15} /> Download .patch</button></div>
       
       {changes.map((change, i) => (
         <section className="diff-card" key={i}>
@@ -337,6 +341,11 @@ export default function App() {
         await apiFetch(`/api/repos/upload?jobId=${id}`, {
           method: 'POST',
           body: formData
+        })
+      } else if (source === 'local') {
+        await apiFetch('/api/repos/local', {
+          method: 'POST',
+          body: JSON.stringify({ path: repo, jobId: id })
         })
       }
       

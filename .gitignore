@@ -9,3 +9,6 @@ data/*.db
 workspaces/
 *.patch
 .turbo
+apps/server/data/*
+!apps/server/data/.gitkeep
+*.tsbuildinfo

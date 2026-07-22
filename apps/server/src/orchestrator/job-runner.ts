@@ -80,7 +80,7 @@ export class JobRunner {
       const { createAgent } = await import('@patchpilot/agent')
       const agent = createAgent({ provider: job.provider as 'ollama' | 'openai' | 'anthropic', model: job.model })
 
-      const repoPath = job.sourceType === 'local' ? job.repo : (job.workspacePath || '')
+      const repoPath = job.workspacePath || ''
       const plan = await agent.plan({ task: job.task, repoPath })
 
       await db
