@@ -48,7 +48,9 @@ export const sseManager = {
       try {
         client.reply.raw.write('event: complete\ndata: {}\n\n')
         client.reply.raw.end()
-      } catch {}
+      } catch {
+        // ignore disconnected clients
+      }
     }
     clients.delete(jobId)
   },

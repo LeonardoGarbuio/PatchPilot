@@ -259,14 +259,14 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
   </main></>
 }
 
-function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) => void }) {
+function Review({ jobId }: { jobId: string | null; setView: (v: View) => void }) {
   const { job, changes, events } = useJob(jobId)
   const [approved, setApproved] = useState(false)
   
   if (!job) return <div style={{ padding: '2rem' }}>Loading...</div>
 
-  const checkEvent = events.find((e: any) => e.title.includes('checks passed') || e.title.includes('checks failed'))
-  let checks = { lint: 'skipped', typecheck: 'skipped', tests: 'skipped', build: 'skipped' }
+  const checkEvent = events.find((e: { title: string; detail?: string }) => e.title.includes('checks passed') || e.title.includes('checks failed'))
+  const checks = { lint: 'skipped', typecheck: 'skipped', tests: 'skipped', build: 'skipped' }
   if (checkEvent && checkEvent.detail) {
     const parts = checkEvent.detail.split(' · ')
     parts.forEach((p: string) => {
