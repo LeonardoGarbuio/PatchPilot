@@ -1,0 +1,11 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+onlyBuiltDependencies:
+  - bcrypt
+  - better-sqlite3
+  - cpu-features
+  - esbuild
+  - protobufjs
+  - ssh2

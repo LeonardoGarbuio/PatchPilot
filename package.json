@@ -1,0 +1,36 @@
+{
+    "name":  "patchpilot",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "turbo run dev --parallel",
+                    "build":  "turbo run build",
+                    "typecheck":  "turbo run typecheck",
+                    "lint":  "turbo run lint",
+                    "test":  "turbo run test",
+                    "dev:web":  "pnpm --filter @patchpilot/web dev",
+                    "dev:server":  "pnpm --filter @patchpilot/server dev",
+                    "format":  "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore"
+                },
+    "devDependencies":  {
+                            "turbo":  "^2.3.3",
+                            "prettier":  "^3.5.3",
+                            "typescript":  "^5.8.3"
+                        },
+    "engines":  {
+                    "node":  "\u003e=20",
+                    "pnpm":  "\u003e=9"
+                },
+    "packageManager":  "pnpm@10.13.1",
+    "pnpm":  {
+                 "onlyBuiltDependencies":  [
+                                               "bcrypt",
+                                               "better-sqlite3",
+                                               "cpu-features",
+                                               "esbuild",
+                                               "protobufjs",
+                                               "ssh2"
+                                           ]
+             }
+}

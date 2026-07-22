@@ -1,0 +1,27 @@
+{
+  "name": "@patchpilot/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.4",
+    "@patchpilot/git": "workspace:*",
+    "@patchpilot/sandbox": "workspace:*",
+    "@patchpilot/shared": "workspace:*",
+    "@patchpilot/tools": "workspace:*",
+    "openai": "^4.86.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "typescript": "^5.8.3"
+  }
+}
