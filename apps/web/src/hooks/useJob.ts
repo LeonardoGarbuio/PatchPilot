@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchEventSource } from '@microsoft/fetch-event-source'
-import { apiFetch, getToken } from '../api'
+import { apiFetch } from '../api'
 import type { Job, RunEvent, FileChange } from '@patchpilot/shared'
 
 export function useJobs() {

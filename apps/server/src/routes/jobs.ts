@@ -132,6 +132,34 @@ export async function jobRoutes(app: FastifyInstance) {
     return reply.send({ message: 'Job rejected' })
   })
 
+  // POST /api/jobs/:id/revision — clone a job for revision
+  app.post('/api/jobs/:id/revision', { preHandler: authenticate }, async (req: any, reply) => {
+    const { id } = req.params as { id: string }
+    const userId = req.user.sub as string
+
+    const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
+    if (!job || job.userId !== userId) return reply.status(404).send({ error: 'Job not found' })
+
+    const newId = nanoid()
+    await db.insert(jobs).values({
+      id: newId,
+      userId,
+      title: job.title + ' (Revision)',
+      task: job.task + ' (Note: User requested a revision of the previous solution.)',
+      repo: job.repo,
+      sourceType: job.sourceType,
+      provider: job.provider,
+      model: job.model,
+      workspacePath: job.workspacePath // Copy workspace so we don't have to re-clone/upload
+    })
+
+    // Start planning automatically
+    const runner = new JobRunner(newId)
+    runner.generatePlan().catch(console.error)
+
+    return reply.status(201).send({ id: newId })
+  })
+
   // DELETE /api/jobs/:id
   app.delete('/api/jobs/:id', { preHandler: authenticate }, async (req: any, reply) => {
     const { id } = req.params as { id: string }
@@ -139,6 +167,8 @@ export async function jobRoutes(app: FastifyInstance) {
 
     const [job] = await db.select().from(jobs).where(eq(jobs.id, id))
     if (!job || job.userId !== userId) return reply.status(404).send({ error: 'Job not found' })
+
+    JobRunner.cancel(id)
 
     await db.delete(jobs).where(eq(jobs.id, id))
     return reply.status(204).send()
@@ -207,7 +237,18 @@ export async function jobRoutes(app: FastifyInstance) {
     if (job.sourceType !== 'github') return reply.status(400).send({ error: 'Job is not connected to a GitHub repository' })
     if (!job.workspacePath) return reply.status(500).send({ error: 'Workspace path not found' })
 
-    const [owner, repo] = job.repo.split('/')
+    let owner = '', repo = ''
+    try {
+      const u = new URL(job.repo)
+      const parts = u.pathname.split('/').filter(Boolean)
+      owner = parts[0]
+      repo = parts[1]
+    } catch {
+      const parts = job.repo.split('/').filter(Boolean)
+      owner = parts[0]
+      repo = parts[1]
+    }
+    
     if (!owner || !repo) return reply.status(400).send({ error: 'Invalid repo format' })
 
     const changes = await db.select().from(fileChanges).where(eq(fileChanges.jobId, id))

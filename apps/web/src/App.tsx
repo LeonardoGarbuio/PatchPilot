@@ -1,12 +1,13 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Editor } from '@monaco-editor/react'
 import {
   Activity, ArrowRight, Bot, Box, Check, CheckCircle2, ChevronRight,
-  CircleDot, Clock3, Code2, Download, FileCode2, GitBranch, Github,
+  CircleDot, Clock3, Download, FileCode2, GitBranch, Github,
   LayoutDashboard, ListChecks, LoaderCircle, LockKeyhole, Menu, Play,
-  Plus, RotateCcw, Settings, ShieldCheck, Sparkles, Square, Terminal,
+  Plus, RotateCcw, Settings, ShieldCheck, Sparkles, Square,
   TestTube2, Zap, AlertCircle, FolderOpen
 } from 'lucide-react'
+import type { Job } from '@patchpilot/shared'
 import { useJobs, useJob } from './hooks/useJob'
 import { apiFetch } from './api'
 
@@ -26,7 +27,7 @@ function Sidebar({ view, setView, activeCount }: { view: View; setView: (v: View
         const res = await apiFetch('/api/system/status')
         const data = await res.json()
         if (mounted) setSysStatus(data)
-      } catch {}
+      } catch { /* ignore */ }
     }
     check()
     const int = setInterval(check, 10000)
@@ -57,7 +58,7 @@ function Header({ title, subtitle, onMenu }: { title: string; subtitle: string; 
   return <header className="topbar"><button className="mobile-menu" onClick={onMenu}><Menu /></button><div><h1>{title}</h1><p>{subtitle}</p></div><div className="privacy"><LockKeyhole size={14} /> Local only</div></header>
 }
 
-function Dashboard({ setView, jobs, selectJob }: { setView: (v: View) => void, jobs: any[], selectJob: (id: string) => void }) {
+function Dashboard({ setView, jobs, selectJob }: { setView: (v: View) => void, jobs: Job[], selectJob: (id: string) => void }) {
   return <>
     <Header title="Good morning" subtitle="Your code stays local. Your changes stay under control." onMenu={() => {}} />
     <main className="content">
@@ -77,7 +78,7 @@ function Dashboard({ setView, jobs, selectJob }: { setView: (v: View) => void, j
         <div><span><CheckCircle2 size={17} /> Success rate</span><strong>{jobs.length ? Math.round((jobs.filter(j => j.status === 'complete' || j.status === 'approved').length / jobs.length) * 100) : 0}%</strong></div>
         <div><span><Clock3 size={17} /> Avg time</span><strong>
           {jobs.filter(j => j.startedAt && j.finishedAt).length > 0
-            ? '~' + Math.round(jobs.filter(j => j.startedAt && j.finishedAt).reduce((acc, j) => acc + (new Date(j.finishedAt).getTime() - new Date(j.startedAt).getTime()), 0) / jobs.filter(j => j.startedAt && j.finishedAt).length / 60000) + 'm'
+            ? '~' + Math.round(jobs.filter(j => j.startedAt && j.finishedAt).reduce((acc, j) => acc + (new Date(j.finishedAt as string).getTime() - new Date(j.startedAt as string).getTime()), 0) / jobs.filter(j => j.startedAt && j.finishedAt).length / 60000) + 'm'
             : '~2m'}
         </strong></div>
       </section>
@@ -164,7 +165,7 @@ function NewTask({ begin }: { begin: (task: string, repo: string, source: 'local
     </main></>
 }
 
-function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; setView: (v: View) => void, jobs: any[], selectJob: (id: string) => void }) {
+function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; setView: (v: View) => void, jobs: Job[], selectJob: (id: string) => void }) {
   const { job, events, loading, generatePlan, approveAndRun } = useJob(jobId)
 
   if (!jobId) {
@@ -197,7 +198,6 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
 
   const isPlanning = job.status === 'planning'
   const isAwaiting = job.status === 'awaiting_approval'
-  const isRunning = job.status === 'running' || job.status === 'verifying'
   const isComplete = job.status === 'complete' || job.status === 'approved'
 
   if (isAwaiting || isPlanning || job.status === 'idle') return <><Header title="Review the plan" subtitle="No files have been changed yet." onMenu={() => {}} /><main className="content narrow">
@@ -205,7 +205,7 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
     
     <section className="plan-card"><div className="plan-header"><span><ListChecks /></span><div><small>PROPOSED PLAN</small><h2>{job.plan ? `${job.plan.length} steps to a verified patch` : 'Generating plan...'}</h2><p>PatchPilot inspected the repository structure and prepared this plan.</p></div></div>
       {job.plan ? (
-        <ol>{job.plan.map((step: any, i: number) => <li key={i}><span>{i + 1}</span><div><strong>{step.title}</strong><small>{step.description}</small></div>{step.permission === 'verify' && <ShieldCheck size={17} />}</li>)}</ol>
+        <ol>{job.plan.map((step, i: number) => <li key={i}><span>{i + 1}</span><div><strong>{step.title}</strong><small>{step.description}</small></div>{step.permission === 'verify' && <ShieldCheck size={17} />}</li>)}</ol>
       ) : (
         <div style={{ padding: '2rem', textAlign: 'center', opacity: 0.5 }}>
           {isPlanning ? 'AI is analyzing the codebase...' : 'Waiting to start...'}
@@ -223,7 +223,7 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
   if (job.status === 'failed') return <><Header title="Run failed" subtitle={`${job.repo} · ${job.title}`} onMenu={() => {}} /><main className="content narrow">
     <section className="execution-head"><div className="runner failed"><div><AlertCircle size={28} color="#f87171" /></div><span><small>ERROR</small><h2 style={{ color: '#f87171' }}>The run has failed.</h2></span></div></section>
     <section className="timeline">
-      {events.map((event: any, i: number) => (
+      {events.map((event, i: number) => (
         <div className="event shown active" key={i}><div className="event-line"><span><CircleDot size={12} /></span></div>
         <div><strong>{event.title}</strong>{event.detail && <small>{event.detail}</small>}</div>
         <time>{new Date(event.timestamp).toLocaleTimeString()}</time></div>
@@ -239,7 +239,7 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
     <section className="execution-head"><div className={`runner ${isComplete ? 'complete' : 'running'}`}><div>{isComplete ? <Check size={28} /> : <LoaderCircle size={28} className="spin" />}</div><span><small>{isComplete ? 'VERIFIED PATCH READY' : 'RUNNING IN ISOLATED CONTAINER'}</small><h2>{isComplete ? 'Every check passed.' : 'Building a safe, tested change.'}</h2></span></div></section>
     
     <section className="timeline">
-      {events.map((event: any, i: number) => { 
+      {events.map((event, i: number) => { 
         return <div className="event shown active" key={i}><div className="event-line"><span><CircleDot size={12} /></span></div>
         <div><strong>{event.title}</strong>{event.detail && <small>{event.detail}</small>}</div>
         <time>{new Date(event.timestamp).toLocaleTimeString()}</time></div>
@@ -260,10 +260,20 @@ function RunView({ jobId, setView, jobs, selectJob }: { jobId: string | null; se
 }
 
 function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) => void }) {
-  const { job, changes } = useJob(jobId)
+  const { job, changes, events } = useJob(jobId)
   const [approved, setApproved] = useState(false)
   
   if (!job) return <div style={{ padding: '2rem' }}>Loading...</div>
+
+  const checkEvent = events.find((e: any) => e.title.includes('checks passed') || e.title.includes('checks failed'))
+  let checks = { lint: 'skipped', typecheck: 'skipped', tests: 'skipped', build: 'skipped' }
+  if (checkEvent && checkEvent.detail) {
+    const parts = checkEvent.detail.split(' · ')
+    parts.forEach((p: string) => {
+      const [k, v] = p.split(': ')
+      if (k && v) checks[k as keyof typeof checks] = v.split(' ')[0]
+    })
+  }
 
   const additions = changes.reduce((acc, c) => acc + (c.additions || 0), 0)
   const deletions = changes.reduce((acc, c) => acc + (c.deletions || 0), 0)
@@ -288,7 +298,18 @@ function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) =
       ))}
 
     </section>
-    <aside className="review-side"><section><h3>Verification</h3>{['Lint', 'Typecheck', 'Tests', 'Build'].map(x => <div className="check-row" key={x}><CheckCircle2 /><span>{x}</span><strong>Verified</strong></div>)}</section><section><h3>Files</h3>{changes.map((x, i) => <label className="file-check" key={i}><input type="checkbox" defaultChecked /><span><FileCode2 />{x.path}<small>{x.status}</small></span></label>)}</section><div className="approval">
+    <aside className="review-side">
+      <section>
+        <h3>Verification</h3>
+        {Object.entries(checks).map(([k, v]) => (
+          <div className="check-row" key={k}>
+            {v === 'passed' ? <CheckCircle2 color="#34d399" /> : v === 'failed' ? <AlertCircle color="#f87171" /> : <CircleDot />}
+            <span style={{textTransform: 'capitalize'}}>{k}</span>
+            <strong>{v}</strong>
+          </div>
+        ))}
+      </section>
+      <section><h3>Files</h3>{changes.map((x, i) => <label className="file-check" key={i}><input type="checkbox" defaultChecked /><span><FileCode2 />{x.path}<small>{x.status}</small></span></label>)}</section><div className="approval">
       <button className={approved ? 'approved' : ''} onClick={async () => {
         if (!approved) {
           await apiFetch(`/api/jobs/${jobId}/approve`, { method: 'POST' })
@@ -305,7 +326,14 @@ function Review({ jobId, setView }: { jobId: string | null; setView: (v: View) =
           } catch (err) { alert('Failed to create PR: ' + err) }
         }
       }}><Github /> Create Pull Request</button>
-      <button onClick={() => setView('run')}><RotateCcw /> Request revision</button><p><LockKeyhole /> No remote push will be performed unless requested.</p></div></aside>
+      <button onClick={async () => {
+        const res = await apiFetch(`/api/jobs/${jobId}/revision`, { method: 'POST' })
+        const { id } = await res.json()
+        if (id) {
+          // Re-navigate or select new job via refresh but here we just trigger new job
+          window.location.reload()
+        }
+      }}><RotateCcw /> Request revision</button><p><LockKeyhole /> No remote push will be performed unless requested.</p></div></aside>
   </main></>
 }
 

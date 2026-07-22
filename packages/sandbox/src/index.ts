@@ -20,7 +20,10 @@ export interface SandboxVerifyResult {
 export interface Sandbox {
   containerId: string
   workspacePath: string
-  exec(command: string): Promise<{ stdout: string; stderr: string; exitCode: number }>
+  exec(args: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }>
+  readFile(path: string): Promise<string>
+  writeFile(path: string, content: string): Promise<void>
+  listDir(path: string): Promise<string[]>
   verify(): Promise<SandboxVerifyResult>
   destroy(): Promise<void>
 }
@@ -48,11 +51,13 @@ const ALLOWED_COMMANDS = new Set([
   'go test ./...',
 ])
 
-export function isAllowedCommand(cmd: string): boolean {
-  const cleanCmd = cmd.trim()
-  // Block shell characters to prevent chaining and execution bypass
-  if (/[&|;`$()]/.test(cleanCmd)) return false
-  // Ensure the command exactly matches an allowed command or is a sub-command of it (with space)
+export function isAllowedCommand(args: string[]): boolean {
+  if (!args || args.length === 0) return false
+  // Reconstruct command for checking against allowlist
+  const cleanCmd = args.join(' ').trim()
+  // Block shell characters inside any argument just to be safe
+  if (args.some(arg => /[&|;`$()\n]/.test(arg))) return false
+  
   return [...ALLOWED_COMMANDS].some(
     (allowed) => cleanCmd === allowed || cleanCmd.startsWith(allowed + ' ')
   )
@@ -109,77 +114,159 @@ export async function createSandbox(options: { workspacePath: string }): Promise
 
   await container.start()
 
+  async function _exec(args: string[]) {
+    const exec = await container.exec({
+      Cmd: args,
+      AttachStdout: true,
+      AttachStderr: true,
+      WorkingDir: '/workspace',
+    })
+
+    const stream = await exec.start({ hijack: true, stdin: false })
+    let stdout = ''
+    let stderr = ''
+
+    await new Promise<void>((resolve, reject) => {
+      container.modem.demuxStream(
+        stream,
+        { write: (chunk: Buffer) => { stdout += chunk.toString() } },
+        { write: (chunk: Buffer) => { stderr += chunk.toString() } },
+      )
+      let done = false
+      
+      const timeout = setTimeout(() => {
+        if (done) return
+        done = true
+        stream.destroy()
+        reject(new Error(`Command timed out after 60s: ${args.join(' ')}`))
+      }, 60000)
+
+      stream.on('end', () => {
+        if (done) return
+        done = true
+        clearTimeout(timeout)
+        resolve()
+      })
+      
+      stream.on('error', (err) => {
+        if (done) return
+        done = true
+        clearTimeout(timeout)
+        reject(err)
+      })
+    })
+
+    const inspection = await exec.inspect()
+    return { stdout, stderr, exitCode: inspection.ExitCode ?? 1 }
+  }
+
   const sandbox: Sandbox = {
     containerId: container.id,
     workspacePath,
 
-    async exec(command: string) {
-      if (!isAllowedCommand(command)) {
-        return { stdout: '', stderr: `Command not allowed by security policy: ${command}`, exitCode: 1 }
+    async exec(args: string[]) {
+      if (!isAllowedCommand(args)) {
+        return { stdout: '', stderr: `Command not allowed by security policy: ${args.join(' ')}`, exitCode: 1 }
       }
+      return _exec(args)
+    },
 
+    async readFile(path: string) {
+      const { stdout, stderr, exitCode } = await _exec(['cat', path])
+      if (exitCode !== 0) throw new Error(stderr || 'File not found')
+      return stdout
+    },
+
+    async writeFile(path: string, content: string) {
+      // Create directory first
+      await _exec(['mkdir', '-p', require('path').dirname(path)])
+      
       const exec = await container.exec({
-        Cmd: ['/bin/sh', '-c', command],
+        Cmd: ['/bin/sh', '-c', `cat > "${path.replace(/"/g, '\\"')}"`],
+        AttachStdin: true,
         AttachStdout: true,
         AttachStderr: true,
         WorkingDir: '/workspace',
       })
-
-      const stream = await exec.start({ hijack: true, stdin: false })
-      let stdout = ''
-      let stderr = ''
-
-      await new Promise<void>((resolve, reject) => {
-        container.modem.demuxStream(
-          stream,
-          { write: (chunk: Buffer) => { stdout += chunk.toString() } },
-          { write: (chunk: Buffer) => { stderr += chunk.toString() } },
-        )
-        let done = false
-        
-        const timeout = setTimeout(() => {
-          if (done) return
-          done = true
-          stream.destroy()
-          reject(new Error(`Command timed out after 60s: ${command}`))
-        }, 60000)
-
-        stream.on('end', () => {
-          if (done) return
-          done = true
-          clearTimeout(timeout)
-          resolve()
-        })
-        
-        stream.on('error', (err) => {
-          if (done) return
-          done = true
-          clearTimeout(timeout)
-          reject(err)
-        })
+      const stream = await exec.start({ hijack: true, stdin: true })
+      await new Promise<void>((resolve) => {
+        stream.write(content)
+        stream.end()
+        stream.on('end', resolve)
       })
+    },
 
-      const inspection = await exec.inspect()
-      return { stdout, stderr, exitCode: inspection.ExitCode ?? 1 }
+    async listDir(path: string) {
+      const { stdout, exitCode } = await _exec(['find', path || '.', '-maxdepth', '2'])
+      if (exitCode !== 0) return []
+      return stdout.trim().split('\n').filter(Boolean)
     },
 
     async verify(): Promise<SandboxVerifyResult> {
-      // Create a temporary verification container with network access
-      const verifyContainer = await d.createContainer({
+      // 1. Install dependencies in a container WITH network
+      const installContainer = await d.createContainer({
         Image: image,
         Cmd: ['tail', '-f', '/dev/null'],
         WorkingDir: '/workspace',
         HostConfig: {
           Binds: [`${workspacePath}:/workspace:rw`],
           AutoRemove: true,
-          // Network access is allowed for installing dependencies
         },
+      })
+      await installContainer.start()
+
+      const iExec = async (args: string[]) => {
+        const exec = await installContainer.exec({
+          Cmd: args,
+          AttachStdout: true,
+          AttachStderr: true,
+          WorkingDir: '/workspace',
+        })
+        const stream = await exec.start({ hijack: true, stdin: false })
+        await new Promise<void>((resolve) => {
+          stream.on('end', resolve)
+          stream.resume() // discard output
+        })
+      }
+
+      try {
+        if (existsSync(`${workspacePath}/package.json`)) {
+          await iExec(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
+        } else if (existsSync(`${workspacePath}/requirements.txt`)) {
+          await iExec(['pip', 'install', '-r', 'requirements.txt'])
+        }
+      } catch (err) {
+        console.warn('Failed to install dependencies in install container', err)
+      }
+      await installContainer.stop({ t: 2 }).catch(() => {})
+
+      // 2. Run verification in a strict container WITHOUT network
+      const verifyContainer = await d.createContainer({
+        Image: image,
+        Cmd: ['tail', '-f', '/dev/null'],
+        WorkingDir: '/workspace',
+        HostConfig: {
+          Binds: [`${workspacePath}:/workspace:rw`],
+          Memory: 512 * 1024 * 1024,
+          MemorySwap: 512 * 1024 * 1024,
+          CpuQuota: 50_000,
+          NetworkMode: 'none',
+          AutoRemove: true,
+          SecurityOpt: ['no-new-privileges:true'],
+          CapDrop: ['ALL'],
+          ReadonlyRootfs: true,
+          PidsLimit: 50,
+        },
+        Env: [
+          'CI=true',
+          'NODE_ENV=test',
+        ],
       })
       await verifyContainer.start()
 
-      const vExec = async (cmd: string) => {
+      const vExec = async (args: string[]) => {
         const exec = await verifyContainer.exec({
-          Cmd: ['/bin/sh', '-c', cmd],
+          Cmd: args,
           AttachStdout: true,
           AttachStderr: true,
           WorkingDir: '/workspace',
@@ -200,18 +287,8 @@ export async function createSandbox(options: { workspacePath: string }): Promise
         return { stdout, stderr, exitCode: inspection.ExitCode ?? 1 }
       }
 
-      try {
-        if (existsSync(`${workspacePath}/package.json`)) {
-          await vExec('npm install --no-audit --no-fund')
-        } else if (existsSync(`${workspacePath}/requirements.txt`)) {
-          await vExec('pip install -r requirements.txt')
-        }
-      } catch (err) {
-        console.warn('Failed to install dependencies in verify container', err)
-      }
-
-      const run = async (cmd: string) => {
-        const { stdout, stderr, exitCode } = await vExec(cmd)
+      const run = async (args: string[]) => {
+        const { stdout, stderr, exitCode } = await vExec(args)
         const output = stdout + '\n' + stderr
         if (output.includes('ENOENT') || output.includes('no such file or directory') || (output.includes('package.json') && exitCode !== 0)) {
           return 'skipped'
@@ -221,13 +298,13 @@ export async function createSandbox(options: { workspacePath: string }): Promise
         return 'passed'
       }
 
-      const lint = await run('npm run lint --if-present').catch(() => 'skipped' as const)
-      const typecheck = await run('npm run typecheck --if-present').catch(() => 'skipped' as const)
+      const lint = await run(['npm', 'run', 'lint', '--if-present']).catch(() => 'skipped' as const)
+      const typecheck = await run(['npm', 'run', 'typecheck', '--if-present']).catch(() => 'skipped' as const)
 
       let testCount = 0
       let tests: 'passed' | 'failed' | 'skipped' = 'skipped'
       try {
-        const { stdout, stderr, exitCode } = await vExec('npm run test --if-present -- --reporter=json 2>/dev/null || npm run test --if-present 2>&1')
+        const { stdout, stderr, exitCode } = await vExec(['npm', 'run', 'test', '--if-present'])
         const output = stdout + '\n' + stderr
         if (output.includes('ENOENT') || output.includes('no such file or directory') || (output.includes('package.json') && exitCode !== 0)) {
           tests = 'skipped'
@@ -242,12 +319,10 @@ export async function createSandbox(options: { workspacePath: string }): Promise
         }
       } catch {}
 
-      const build = await run('npm run build --if-present').catch(() => 'skipped' as const)
+      const build = await run(['npm', 'run', 'build', '--if-present']).catch(() => 'skipped' as const)
 
       await verifyContainer.stop({ t: 2 }).catch(() => {})
 
-      // Must have at least one test passed, or all skipped. If all skipped, it's considered passed for repos without tests.
-      // But if there are failures, allPassed is false.
       const allPassed = [lint, typecheck, tests, build].every((r) => r !== 'failed')
 
       return { lint, typecheck, tests, testCount, build, allPassed }

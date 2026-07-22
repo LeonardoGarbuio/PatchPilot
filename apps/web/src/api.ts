@@ -12,7 +12,7 @@ export async function ensureAuthenticated() {
         isAuthenticated = true
         return
       }
-    } catch {}
+    } catch { /* ignore */ }
 
     // Create an anonymous user with a secure random password
   const num = Math.floor(Math.random() * 1000000)
@@ -63,7 +63,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
     try {
       const err = await res.json()
       msg = err.error || msg
-    } catch {}
+    } catch { /* ignore */ }
     throw new Error(msg)
   }
   

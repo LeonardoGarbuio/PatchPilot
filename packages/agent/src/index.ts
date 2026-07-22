@@ -3,7 +3,6 @@ import type { Sandbox } from '@patchpilot/sandbox'
 import { OllamaProvider } from './providers/ollama.js'
 import { OpenAIProvider } from './providers/openai.js'
 import { AnthropicProvider } from './providers/anthropic.js'
-import { listDir, readFile, searchFiles, applyPatch, analyzeImpact } from '@patchpilot/tools'
 import { join } from 'path'
 
 export interface AgentProvider {
@@ -68,14 +67,8 @@ export function createAgent(options: AgentOptions) {
   return {
     async plan({ task, repoPath }: PlanOptions): Promise<PlanStep[]> {
       let structureText = 'Repository structure not available yet.'
-      try {
-        if (repoPath) {
-          const structure = listDir(repoPath, repoPath, 2)
-          structureText = structure.map((e) => `${e.type === 'dir' ? '📁' : '📄'} ${e.path}`).join('\n')
-        }
-      } catch (err) {
-        console.warn(`Could not read repoPath for planning: ${repoPath}`, err)
-      }
+      // Planning phase assumes the agent is given the task and just plans it.
+      // We don't have access to the sandbox here yet in the current architecture.
 
       const messages: Message[] = [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -142,42 +135,54 @@ export function createAgent(options: AgentOptions) {
         switch (action.action) {
           case 'read_file': {
             const cleanPath = sanitizePath(action.path)
-            const absPath = join(sandbox.workspacePath, cleanPath)
-            const result = readFile(absPath, sandbox.workspacePath)
-            await onEvent({ type: 'file_read', title: `Read ${cleanPath}`, detail: `${result.lines} lines` })
-            messages.push({ role: 'user', content: `File content of ${cleanPath}:\n\`\`\`\n${result.content}\n\`\`\`` })
+            try {
+              const content = await sandbox.readFile(cleanPath)
+              const lines = content.split('\n').length
+              await onEvent({ type: 'file_read', title: `Read ${cleanPath}`, detail: `${lines} lines` })
+              messages.push({ role: 'user', content: `File content of ${cleanPath}:\n\`\`\`\n${content}\n\`\`\`` })
+            } catch (err: any) {
+              messages.push({ role: 'user', content: `Failed to read file: ${err.message}` })
+            }
             break
           }
 
           case 'list_dir': {
             const cleanPath = sanitizePath(action.path)
-            const absPath = join(sandbox.workspacePath, cleanPath)
-            const entries = listDir(absPath, sandbox.workspacePath)
+            const entries = await sandbox.listDir(cleanPath)
             await onEvent({ type: 'info', title: `Listed ${cleanPath || '/'}`, detail: `${entries.length} entries` })
-            messages.push({ role: 'user', content: `Directory listing:\n${entries.map((e) => `${e.type === 'dir' ? '📁' : '📄'} ${e.path}`).join('\n')}` })
+            messages.push({ role: 'user', content: `Directory listing:\n${entries.join('\n')}` })
             break
           }
 
           case 'search': {
-            const results = searchFiles(sandbox.workspacePath, action.query, { extensions: action.extensions })
+            const { stdout, exitCode } = await sandbox.exec(['grep', '-rn', action.query, '.'])
+            const lines = exitCode === 0 ? stdout.trim().split('\n').slice(0, 50) : []
+            const results = lines.map(line => {
+              const [file, ln, ...content] = line.split(':')
+              return { file, line: parseInt(ln) || 0, content: content.join(':').trim() }
+            })
             await onEvent({ type: 'info', title: `Searched for "${action.query}"`, detail: `${results.length} matches` })
             messages.push({ role: 'user', content: `Search results:\n${results.map((r) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
             break
           }
 
           case 'analyze_impact': {
-            const cleanPath = sanitizePath(action.path)
-            const results = analyzeImpact(sandbox.workspacePath, cleanPath, action.symbol)
-            await onEvent({ type: 'info', title: `Analyzed impact of ${action.symbol ?? cleanPath}`, detail: `${results.length} matches` })
+            const searchFor = action.symbol ?? (sanitizePath(action.path).split('/').pop()?.replace(/\.[^/.]+$/, '') ?? '')
+            const { stdout, exitCode } = await sandbox.exec(['grep', '-rn', searchFor, '.'])
+            const lines = exitCode === 0 ? stdout.trim().split('\n').slice(0, 50) : []
+            const results = lines.map(line => {
+              const [file, ln, ...content] = line.split(':')
+              return { file, line: parseInt(ln) || 0, content: content.join(':').trim() }
+            })
+            await onEvent({ type: 'info', title: `Analyzed impact of ${searchFor}`, detail: `${results.length} matches` })
             messages.push({ role: 'user', content: `Impact analysis results:\n${results.map((r) => `${r.file}:${r.line}  ${r.content}`).join('\n')}` })
             break
           }
 
           case 'write_file': {
             const cleanPath = sanitizePath(action.path)
-            const absPath = join(sandbox.workspacePath, cleanPath)
             let original = ''
-            try { original = readFile(absPath, sandbox.workspacePath).content } catch {}
+            try { original = await sandbox.readFile(cleanPath) } catch {}
 
             if (!writtenFiles.has(cleanPath)) {
               writtenFiles.set(cleanPath, { original, current: action.content })
@@ -185,7 +190,7 @@ export function createAgent(options: AgentOptions) {
               writtenFiles.get(cleanPath)!.current = action.content
             }
 
-            applyPatch(absPath, sandbox.workspacePath, action.content)
+            await sandbox.writeFile(cleanPath, action.content)
             await onEvent({ type: 'file_write', title: `Wrote ${cleanPath}` })
             messages.push({ role: 'user', content: `✓ File written: ${cleanPath}` })
             break
@@ -193,7 +198,8 @@ export function createAgent(options: AgentOptions) {
 
           case 'run_command': {
             await onEvent({ type: 'command', title: `Running command: ${action.command}` })
-            const { stdout, stderr, exitCode } = await sandbox.exec(action.command)
+            const args = typeof action.command === 'string' ? action.command.trim().split(/\s+/) : action.command
+            const { stdout, stderr, exitCode } = await sandbox.exec(args)
             const output = `Exit code: ${exitCode}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`
             await onEvent({ type: 'info', title: `Command finished (exit ${exitCode})`, detail: action.command })
             messages.push({ role: 'user', content: `Command output:\n\`\`\`\n${output}\n\`\`\`` })

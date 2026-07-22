@@ -19,9 +19,21 @@ import { assertTransition } from '@patchpilot/shared'
  */
 export class JobRunner {
   private jobId: string
+  private abortController: AbortController
+
+  private static runners = new Map<string, JobRunner>()
+
+  static cancel(jobId: string) {
+    const runner = JobRunner.runners.get(jobId)
+    if (runner) {
+      runner.abortController.abort()
+      JobRunner.runners.delete(jobId)
+    }
+  }
 
   constructor(jobId: string) {
     this.jobId = jobId
+    this.abortController = new AbortController()
   }
 
   private async updateStatus(status: Job['status']) {
@@ -112,8 +124,11 @@ export class JobRunner {
 
     const plan: PlanStep[] = JSON.parse(job.plan)
 
+    JobRunner.runners.set(this.jobId, this)
+
     let sandbox: any = null
     try {
+      if (this.abortController.signal.aborted) throw new Error('Job cancelled')
       // 1. Spin up isolated container
       const { createSandbox } = await import('@patchpilot/sandbox')
       sandbox = await createSandbox({ workspacePath: job.workspacePath })
@@ -143,6 +158,7 @@ export class JobRunner {
       const agent = createAgent({ provider: job.provider as 'ollama' | 'openai' | 'anthropic', model: job.model })
 
       for (let solId = 1; solId <= numSolutions; solId++) {
+        if (this.abortController.signal.aborted) throw new Error('Job cancelled')
         await this.addEvent({ type: 'info', title: `Starting Solution ${solId}/${numSolutions}` })
         
         if (solId > 1) {
@@ -159,6 +175,7 @@ export class JobRunner {
         })
         
         allChanges.push(...changes);
+        if (this.abortController.signal.aborted) throw new Error('Job cancelled')
 
         // 3. Persist file changes
         for (const change of changes) {
@@ -191,6 +208,7 @@ export class JobRunner {
         })
         
         if (verifyResult.allPassed) allPassed = true;
+        if (this.abortController.signal.aborted) throw new Error('Job cancelled')
       }
 
       // 5. Extract Project Memory from all solutions
@@ -231,11 +249,15 @@ export class JobRunner {
       if (sandbox) {
         try {
           await sandbox.destroy()
-          await this.addEvent({ type: 'info', title: 'Container destroyed — workspace clean' })
+          // Only add event if not cancelled (job might be deleted)
+          if (!this.abortController.signal.aborted) {
+            await this.addEvent({ type: 'info', title: 'Container destroyed — workspace clean' }).catch(() => {})
+          }
         } catch (cleanupErr) {
           console.error(`Failed to destroy sandbox for job ${this.jobId}`, cleanupErr)
         }
       }
+      JobRunner.runners.delete(this.jobId)
     }
   }
 }

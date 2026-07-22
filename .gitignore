@@ -11,4 +11,4 @@ workspaces/
 .turbo
 apps/server/data/*
 !apps/server/data/.gitkeep
-*.tsbuildinfo
+*.tsbuildinfo*.tsbuildinfo
