@@ -1,25 +1,24 @@
-import test from 'node:test'
-import assert from 'node:assert'
+import { test, expect } from 'vitest'
 import { isAllowedCommand } from './index.js'
 
 test('isAllowedCommand allows valid commands', () => {
-  assert.strictEqual(isAllowedCommand(['npm', 'test']), true)
-  assert.strictEqual(isAllowedCommand(['npm', 'run', 'lint']), true)
-  assert.strictEqual(isAllowedCommand(['cargo', 'test']), true)
-  assert.strictEqual(isAllowedCommand(['go', 'test', './...']), true)
+  expect(isAllowedCommand(['npm', 'test'])).toBe(true)
+  expect(isAllowedCommand(['npm', 'run', 'lint'])).toBe(true)
+  expect(isAllowedCommand(['cargo', 'test'])).toBe(true)
+  expect(isAllowedCommand(['go', 'test', './...'])).toBe(true)
 })
 
 test('isAllowedCommand blocks shell chaining', () => {
-  assert.strictEqual(isAllowedCommand(['npm', 'test', '&&', 'cat', '/etc/passwd']), false)
-  assert.strictEqual(isAllowedCommand(['npm', 'run', 'lint', ';', 'rm', '-rf', '/']), false)
-  assert.strictEqual(isAllowedCommand(['cargo', 'test', '|', 'grep', 'secret']), false)
-  assert.strictEqual(isAllowedCommand(['npm', 'test', '||', 'echo', 'failed']), false)
-  assert.strictEqual(isAllowedCommand(['npm', 'test', '`whoami`']), false)
-  assert.strictEqual(isAllowedCommand(['npm', 'test', '$(whoami)']), false)
+  expect(isAllowedCommand(['npm', 'test', '&&', 'cat', '/etc/passwd'])).toBe(false)
+  expect(isAllowedCommand(['npm', 'run', 'lint', ';', 'rm', '-rf', '/'])).toBe(false)
+  expect(isAllowedCommand(['cargo', 'test', '|', 'grep', 'secret'])).toBe(false)
+  expect(isAllowedCommand(['npm', 'test', '||', 'echo', 'failed'])).toBe(false)
+  expect(isAllowedCommand(['npm', 'test', '`whoami`'])).toBe(false)
+  expect(isAllowedCommand(['npm', 'test', '$(whoami)'])).toBe(false)
 })
 
 test('isAllowedCommand blocks unknown commands', () => {
-  assert.strictEqual(isAllowedCommand(['npm', 'install']), false)
-  assert.strictEqual(isAllowedCommand(['cat', 'package.json']), false)
-  assert.strictEqual(isAllowedCommand(['node', 'dist/index.js']), false)
+  expect(isAllowedCommand(['npm', 'install'])).toBe(false)
+  expect(isAllowedCommand(['cat', 'package.json'])).toBe(false)
+  expect(isAllowedCommand(['node', 'dist/index.js'])).toBe(false)
 })

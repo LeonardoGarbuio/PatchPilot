@@ -19,7 +19,7 @@ test('commentRoutes enforces ownership (returns 404 if file change does not belo
   const app = Fastify()
   // Mock successful authentication with a fake user ID
   app.decorateRequest('jwtVerify', async function() { this.user = { sub: 'fake-user-id' } })
-  app.decorateRequest('user', { sub: 'fake-user-id' })
+  app.decorateRequest('user', null as any)
   await app.register(commentRoutes)
   
   const res = await app.inject({
